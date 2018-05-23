@@ -43,10 +43,10 @@ get_prior(trade ~ Asymmetry + Isolation +(1|Round), family = poisson(link = "log
 
 
 # model with asymmetry and isolation
-m1 = brm(trade ~ Asymmetry + Isolation,family = poisson(link = "log"),
+m1 = brm(trade ~ Asymmetry + Isolation, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,5), class = b, coef = Asymmetry_s),
-                   prior(normal(0,5), class = b, coef = Isolation_s)),
+                   prior(normal(0,2), class = b, coef = Asymmetry),
+                   prior(normal(0,2), class = b, coef = Isolation)),
          data = sub,
          cores = 2,
          chain = 1,
@@ -83,7 +83,7 @@ m3 = brm(trade ~ Asymmetry, family = poisson(link = "log"),
          )
 
 # model with only Isolation
-m3 = brm(trade ~ Isolation, family = poisson(link = "log"),
+m4 = brm(trade ~ Isolation, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
                    prior(normal(0,2), class = b, coef = Isolation)),
          data = sub,
@@ -93,20 +93,10 @@ m3 = brm(trade ~ Isolation, family = poisson(link = "log"),
          warmup = 1000
          )
 
-# model with only asymmetry
-m3 = brm(trade ~ Asymmetry, family = poisson(link = "log"),
-         prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,2), class = b, coef = Asymmetry)),
-         data = sub,
-         cores = 2,
-         chain = 1,
-         iter = 1100,
-         warmup = 1000
-         )
 
 
 # model comparison
-compare()
+compare(m1,m2,m3,m4)
 
 
 # rethinking
