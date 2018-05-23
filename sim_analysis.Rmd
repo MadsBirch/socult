@@ -1,0 +1,101 @@
+---
+title: "Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+```{r}
+library(ggplot2)
+library(brms)
+library(brmstools)
+```
+
+
+## DATA
+```{r}
+
+d = read.csv("stat_data.csv")
+
+sub = subset(d, Simulation %in% 300:303)
+```
+
+## MODELLING
+```{r}
+
+# plotting variables to decide on outcome distribution
+# Histomancy, this is not a legit procedure. It is the residuals of the model, which are normally distributed or not (282)
+ggplot(sub, aes(trade))+geom_density()
+
+
+# scaling variables
+sub$Asymmetry_s = scale(sub$Asymmetry)
+sub$Isolation_s = scale(sub$Isolation)
+
+
+
+# brms
+get_prior(trade_s ~ Asymmetry_s + Isolation_s + Round, family = poisson(link = "log"), data = sub)
+
+
+m1 = brm(trade_s ~ Asymmetry_s + Isolation_s + Round,
+         prior = c(prior(normal(0,5), class = Intercept),
+                   prior(normal(0,5), class = b, coef = Asymmetry_s),
+                   prior(normal(0,5), class = b, coef = Isolation_s),
+                   prior(normal(0,10), class = b, coef = Round)),
+         data = sub,
+         cores = 2,
+         chain = 1,
+         iter = 1100,
+         warmup = 1000
+         )
+summary(m1)
+plot(m1)
+
+m2 = brm(trade ~ Asymmetry_s*Isolation_s*Round, family = poisson(link = "log"),
+         prior = c(prior(normal(0,2), class = Intercept),
+                   prior(normal(0,1), class = b, coef = Asymmetry_s),
+                   prior(normal(0,1), class = b, coef = Isolation_s),
+                   prior(normal(0,1), class = b, coef = Round)),
+         data = sub,
+         cores = 4,
+         chain = 1,
+         iter = 1100,
+         warmup = 1000
+         )
+
+summary(m2)
+plot(m2)
+
+pp_check(m1, namsples = 50)
+
+# rethinking
+m4 <- map2stan(
+  alist(
+    trade_s ~ dpois(r) ,
+    log(r) <- a + b*diagnosis ,
+    a ~ dnorm(0,1),
+    b ~ dnorm(0.6,-0.3),
+    sigma ~ dcauchy(0,2)
+    ), 
+  data= dp2)
+
+
+
+
+m4 = brm(PitchSD ~ diagnosis,
+         prior = c(prior(normal(0,1), class = Intercept),
+         prior(normal(0.6,0.3), class = b, coef = diagnosis),
+         prior(cauchy(0,2), class = sigma)),
+         data = dp2,
+         cores = 4,
+         chain = 4,
+         iter = 50000,
+         warmup = 10000
+         )
+
+```
+
