@@ -32,6 +32,7 @@ ggplot(sub, aes(trade))+geom_density()
 
 
 # scaling variables
+# makes no differeces, it is the Round variable which confuses the model (and me)
 sub$Asymmetry_s = scale(sub$Asymmetry)
 sub$Isolation_s = scale(sub$Isolation)
 
@@ -55,14 +56,13 @@ m1 = brm(trade_s ~ Asymmetry_s + Isolation_s + Round,
 summary(m1)
 plot(m1)
 
-m2 = brm(trade ~ Asymmetry_s*Isolation_s*Round, family = poisson(link = "log"),
-         prior = c(prior(normal(0,2), class = Intercept),
-                   prior(normal(0,1), class = b, coef = Asymmetry_s),
-                   prior(normal(0,1), class = b, coef = Isolation_s),
-                   prior(normal(0,1), class = b, coef = Round)),
+m2 = brm(trade ~ Asymmetry+Isolation, family = poisson(link = "log"),
+         prior = c(prior(normal(0,5), class = Intercept),
+                   prior(normal(0,3), class = b, coef = Asymmetry),
+                   prior(normal(0,3), class = b, coef = Isolation)),
          data = sub,
-         cores = 4,
-         chain = 1,
+         cores = 2,
+         chain = 2,
          iter = 1100,
          warmup = 1000
          )
