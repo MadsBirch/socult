@@ -84,8 +84,6 @@ m4 <- map2stan(
   data= dp2)
 
 
-
-
 m4 = brm(PitchSD ~ diagnosis,
          prior = c(prior(normal(0,1), class = Intercept),
          prior(normal(0.6,0.3), class = b, coef = diagnosis),
