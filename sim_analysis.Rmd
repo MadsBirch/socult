@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(brms)
 library(brmstools)
+
 ```
 
 
@@ -56,7 +57,7 @@ m1 = brm(trade ~ Asymmetry + Isolation, family = poisson(link = "log"),
 summary(m1)
 plot(m1)
 
-# interaction and random intercept for time
+# model with interaction
 m2 = brm(trade ~ Asymmetry*Isolation, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
                    prior(normal(0,2), class = b, coef = Asymmetry),
@@ -96,7 +97,8 @@ m4 = brm(trade ~ Isolation, family = poisson(link = "log"),
 
 
 # model comparison
-compare(m1,m2,m3,m4)
+# model with interaction outperform the other models
+waic(m1,m2,m3,m4)
 
 
 # rethinking
