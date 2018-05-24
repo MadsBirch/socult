@@ -21,7 +21,7 @@ library(brmstools)
 
 d = read.csv("stat_data.csv")
 
-sub = subset(d, Simulation %in% 300:310)
+sub = subset(d, Simulation %in% 300:305)
 ```
 
 ## MODELLING
@@ -131,21 +131,21 @@ summary(m6)
 get_prior(trade ~ Asymmetry_c*Isolation_c*Round_s+(1+Round_s|Simulation), family = poisson(link = "log"), data = sub)
 
 f_m = brm(trade ~ Asymmetry_c*Isolation_c*Round_s+(1+Round_s|Simulation), family = poisson(link = "log"),
-         prior = c(prior(normal(0,20), class = Intercept),
+         prior = c(prior(normal(0,5), class = Intercept),
                    prior(normal(0,2), class = b, coef = Asymmetry_c),
                    prior(normal(0,2), class = b, coef = Isolation_c),
                    prior(normal(0,1), class = b, coef = Round_s),
                    prior(normal(0,2), class = b, coef = Asymmetry_c:Isolation_c),
                    prior(normal(0,2), class = b, coef = Asymmetry_c:Isolation_c:Round_s),
                    prior(normal(0,2), class = b, coef = Asymmetry_c:Round_s),
-                   prior(normal(0,2), class = b, coef = Isolation_c:Round_s)
+                   prior(normal(0,2), class = b, coef = Isolation_c:Round_s),
                    prior(lkj(2), class = cor),
                    prior(cauchy(0,2), class = sd, group = Simulation),
                    prior(cauchy(0,2), class = sd, coef = Intercept, group = Simulation),
                    prior(cauchy(0,2), class = sd, coef =Round_s, group = Simulation)),
          data = sub,
-         cores = 1,
-         chain = 1,
+         cores = 2,
+         chain = 2,
          iter = 2000,
          warmup = 1000
          )
