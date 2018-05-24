@@ -21,7 +21,7 @@ library(brmstools)
 
 d = read.csv("stat_data.csv")
 
-sub = subset(d, Simulation %in% 300:306)
+sub = subset(d, Simulation %in% 300:303)
 ```
 
 ## MODELLING
@@ -33,39 +33,46 @@ ggplot(sub, aes(trade))+geom_density()
 
 
 # scaling variables
-# makes no differeces, it is the Round variable which confuses the model (and me..)
-sub$Asymmetry_s = scale(sub$Asymmetry)
-sub$Isolation_s = scale(sub$Isolation)
+# centering asymmetry and isolation (model is now a lot faster)
+# scaling round
+sub$Asymmetry_c = scale(sub$Asymmetry, center = T, scale = F)
+sub$Isolation_c = scale(sub$Isolation,center = T, scale = F)
+sub$Round_s = scale(sub$Round, center = T, scale = T)
 
-
+prior(normal(0,1), class = b, coef = Round_s)
 
 # brms
-get_prior(trade ~ Asymmetry + Isolation +(1|Round), family = poisson(link = "log"), data = sub)
+get_prior(trade ~ Asymmetry + Isolation + Round, family = poisson(link = "log"), data = sub)
 
 
 # model with asymmetry and isolation
-m1 = brm(trade ~ Asymmetry + Isolation, family = poisson(link = "log"),
+m1 = brm(trade ~ Asymmetry_c + Isolation_c + Round_s, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,2), class = b, coef = Asymmetry),
-                   prior(normal(0,2), class = b, coef = Isolation)),
+                   prior(normal(0,2), class = b, coef = Asymmetry_c),
+                   prior(normal(0,2), class = b, coef = Isolation_c),
+                   prior(normal(0,1), class = b, coef = Round_s)),
          data = sub,
          cores = 2,
          chain = 1,
-         iter = 1100,
+         iter = 2000,
          warmup = 1000
          )
 summary(m1)
 plot(m1)
+pp_check(m1)
 
 # model with interaction
-m2 = brm(trade ~ Asymmetry*Isolation, family = poisson(link = "log"),
+m2 = brm(trade ~ Asymmetry_c*Isolation_c*Round_s+(1+Round_s|Simulation), family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,2), class = b, coef = Asymmetry),
-                   prior(normal(0,2), class = b, coef = Isolation)),
+                   prior(normal(0,2), class = b, coef = Asymmetry_c),
+                   prior(normal(0,2), class = b, coef = Isolation_c),
+                   prior(normal(0,1), class = b, coef = Round_s),
+                   prior(cauchy(0,2), class = sd, group = Simulation),
+                   prior(cauchy(0,2), class = sd, coef = Intercept, group = Simulation)),
          data = sub,
          cores = 2,
-         chain = 1,
-         iter = 1100,
+         chain = 2,
+         iter = 2000,
          warmup = 1000
          )
 
@@ -74,9 +81,9 @@ plot(m2)
 pp_check(m2)
 
 # model with only asymmetry
-m3 = brm(trade ~ Asymmetry, family = poisson(link = "log"),
+m3 = brm(trade ~ Asymmetry_c, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,2), class = b, coef = Asymmetry)),
+                   prior(normal(0,1), class = b, coef = Asymmetry_c)),
          data = sub,
          cores = 2,
          chain = 1,
@@ -85,9 +92,9 @@ m3 = brm(trade ~ Asymmetry, family = poisson(link = "log"),
          )
 
 # model with only Isolation
-m4 = brm(trade ~ Isolation, family = poisson(link = "log"),
+m4 = brm(trade ~ Isolation_c, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,2), class = b, coef = Isolation)),
+                   prior(normal(0,1), class = b, coef = Isolation_c)),
          data = sub,
          cores = 2,
          chain = 1,
@@ -107,9 +114,9 @@ m5 = brm(trade ~ 1, family = poisson(link = "log"),
 
 
 #  model with round
-m6 = brm(trade ~ Round, family = poisson(link = "log"),
+m6 = brm(trade ~ Round_s, family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,5), class = b, coef = Round)),
+                   prior(normal(0,1), class = b, coef = Round_s)),
          data = sub,
          cores = 2,
          chain = 1,
@@ -119,32 +126,53 @@ m6 = brm(trade ~ Round, family = poisson(link = "log"),
 summary(m6)
 
 
-# model comparison
-# model with interaction outperform the other models
-waic(m1,m2,m3,m4)
+### FULL MODEL - NOW INCLUDING RANDOM EFFECT ###
 
+get_prior(trade ~ Asymmetry_c*Isolation_c*Round_s+(1+Round_s|Simulation), family = poisson(link = "log"), data = sub)
 
-### NOW INCLUDING RANDOM EFFECT ###
-
-get_prior(trade ~ Asymmetry*Isolation + (1|Simulation), family = poisson(link = "log"), data = sub)
-
-m7 = brm(trade ~ Asymmetry*Isolation + (1|Simulation), family = poisson(link = "log"),
+f_m = brm(trade ~ Asymmetry_c*Isolation_c*Round_s+(1+Round_s|Simulation), family = poisson(link = "log"),
          prior = c(prior(normal(0,5), class = Intercept),
-                   prior(normal(0,2), class = b, coef = Asymmetry),
-                   prior(normal(0,2), class = b, coef = Isolation),
+                   prior(normal(0,2), class = b, coef = Asymmetry_c),
+                   prior(normal(0,2), class = b, coef = Isolation_c),
+                   prior(normal(0,1), class = b, coef = Round_s),
+                   prior(normal(0,2), class = b, coef = Asymmetry_c:Isolation_c),
+                   prior(normal(0,2), class = b, coef = Asymmetry_c:Isolation_c:Round_s),
+                   prior(normal(0,2), class = b, coef = Asymmetry_c:Round_s),
+                   prior(normal(0,2), class = b, coef = Isolation_c:Round_s),
                    prior(cauchy(0,2), class = sd, group = Simulation),
-                   prior(cauchy(0,2), class = sd, coef = Intercept, group = Simulation)),
+                   prior(cauchy(0,2), class = sd, coef = Intercept, group = Simulation),
+                   prior(cauchy(0,2), class = sd, coef =Round_s, group = Simulation)),
          data = sub,
          cores = 2,
          chain = 1,
-         iter = 1100,
+         iter = 2000,
          warmup = 1000
          )
 
-summary(m7)
-plot(m7)
-pp_check(m7)
+summary(f_m)
+plot(f_)
+pp_check(f_m)
 
+
+# model comparison
+# model with interaction outperform the other models
+waic(m1,m2,m3,m4,)
+
+
+```
+
+
+## PLOTTING
+```{r}
+
+ggplot(sub, aes(round, trade))+geom_line()
+
+
+```
+
+
+## EXTRA
+```{r}
 
 # rethinking
 m4 <- map2stan(
@@ -156,7 +184,5 @@ m4 <- map2stan(
     sigma ~ dcauchy(0,2)
     ), 
   data= dp2)
-
-
 ```
 
