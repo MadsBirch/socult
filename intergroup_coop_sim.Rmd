@@ -1,0 +1,789 @@
+---
+title: "Intergroup_coop_sim"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<h1>Libraries</h1>
+
+```{r Libraries}
+library(tidyverse)
+library(foreach)
+library(doParallel)
+library(doSNOW) 
+library(data.table)
+
+```
+
+<h1>Functions</h1>
+
+```{r Functions}
+######################.
+### CREATE NETWORK ###
+######################.
+# function that makes an edge list.
+create_network = function(nGroup,nActor, ingroupP){
+
+  allA = 1:(nActor * nGroup) # list of all actors
+  allG = c()
+  for (g in 1:nGroup){
+    allG = c(allG, rep(g, nActor)) # list of all groups matching allA
+  }
+  elist = data.frame(A1 = allA, A2 = 0, G1 = allG, G2 = 0) # Egdelist with first actor data
+  
+  allA = allA[sample(length(allA))] # randomize actor list (avoiding to loop through actors in the same order each time)
+  
+  actorDF = elist[,c(1,3)] # copy of edge list but only with first actor columns
+  for (a in allA){ #loop through actors
+    if (a %in% actorDF[,1]){ # if the actor dosent already have a partner..
+      g = elist[a,3] #actors group
+      p = runif(1) # probability (random number between 0 and 1)
+      if (p < ingroupP){ # if ingroup interaction
+        inG = actorDF$A1[which(actorDF[,2]==g)] # list of actor in group
+        inG = setdiff(inG,a) # take main actor out of the list
+        if (length(inG) == 1) partner = inG # if there is only one actor on the list, that is the partner
+        if (length(inG) > 1) partner = sample(inG,1) # if there is more, draw a random partner from the list
+        if (length(inG) == 0){ # if there is no one on the list, find someone in another group.
+          outG = actorDF$A1[which(actorDF[,2]!=g)]
+          if (length(outG) == 1) partner = outG
+          if (length(outG) > 1) partner = sample(outG,1)
+        }
+      } else { # if outgroup interaction
+        outG = actorDF$A1[which(actorDF[,2]!=g)] # list of actors in other groups
+        if (length(outG) == 1) partner = outG 
+        if (length(outG) > 1) partner = sample(outG,1)
+        if (length(outG) == 0){
+          inG = actorDF$A1[which(actorDF[,2]==g)]
+          inG = setdiff(inG,a)
+          if (length(inG) == 1) partner = inG
+          if (length(inG) > 1) partner = sample(inG,1)
+        }
+      }
+      elist[a,2] = partner # put the partner in the edge list
+      actorDF = actorDF[-which(actorDF[,1]==a),] # remove actor from actorDF
+      actorDF = actorDF[-which(actorDF[,1]==partner),] # remove partner from actorDF
+    } # end if statement
+  }  # end loop through actors
+  
+  elist = elist[-which(elist[,2]==0),] # remove rows with zero (the actors in the first actor column that has been moved to second actor column)
+  
+  
+  # assign the right group number in the second group column
+  A = nActor
+  for (g in 1:nGroup){
+  g_a = (g-1) * A + 1:A # a list of actors within g
+  for (i in g_a){
+    elist[which(elist[,2]==i),4] = g
+    }
+  }
+  return(elist)
+}# End function
+
+
+
+
+#################################.
+### CREATE RESOURCE DATAFRAME ###
+#################################.
+# Function that creates a data frame with actors, groups, their resource prefrence and columns for all resources
+create_resource_df = function(nGroup,nActor,nResource,rOffset){
+  
+  #empty containers
+  G = c()
+  Pref = c()
+  r_col = list() 
+  
+  A = nActor
+  allA = 1:(nGroup*A) # list of all actors
+  
+  # Make a list of group numbers that corrspond to the list of all actors
+  for (i in allA){
+    for (g in 1:nGroup){
+      g_a = (g-1) * A + 1:A # a list of actors within g
+      if (i %in% g_a){
+        G = c(G,g) 
+      }
+    }
+  }
+  
+  # make list of prefrences that corrspond to the list of all actors
+  for (r in 1:nResource){
+    Pref = c(Pref,rep(r,A))
+  }
+  
+  # Combine the lists into a data frame and add a column for happiness
+  df = data.frame(Actor = allA, Group = G, 
+                  Preference = Pref, 
+                  Happiness = log(5)*2)
+  
+  # Create reasource columns
+  r_col[1:nResource] = 1 # make the list as long as the number of resources
+  r_col = as.data.frame(r_col) # convert to dataframe
+  names(r_col) = 1:nResource # make column names
+  df = cbind(df, r_col) 
+  
+  #Set random offset for resource preference
+  for (a in df$Actor){
+    off = rnorm(1,mean = 0, sd=rOffset)
+    df$Preference[a] = df$Preference[a] + off
+  }
+  
+  return(df)
+} # End function
+
+
+
+
+#######################.
+### GATHER RESOURCE ###
+#######################.
+# Function that determains the gathered resource for all actors.
+gather_resource = function(df,sdGather, nResource, gatherSuccess){
+  
+  # Empty container for output
+  r_list = c()
+  
+  # Loop through all actors in resource dataframe
+  for (a in df$Actor){
+    S = rbinom(1,1,gatherSuccess) # Determain if successfull
+    
+    if (S == 1){ # if succesfull
+      
+      R = round(rnorm(1,mean = df$Preference[a], sd = sdGather)) # draw a resource
+      
+      # Loops that simulates the resources "being on a wheel" so that that the resource below 1 is the highest resource number and vice versa
+      for (i in 1:1000){
+        if (R < 1){
+          R = nResource + R
+        } else {break}
+      }
+      
+      for (i in 1:1000){
+        if (R > nResource){
+          R = -nResource + R
+        } else {break}
+      }
+    } else { #if not successfull
+      R = 0
+    } 
+    
+    r_list[a] = R # list of resources
+    
+  } # End looping through actors
+  return(r_list) 
+}# End function
+
+
+
+###########################.
+### CALCULATE HAPPINESS ###
+###########################.
+#Function that calculates the happiness score for either all actors or just one. This is controled by logical expression with the "all" parameter. if all=TRUE actor must be specified.
+calculate_happiness = function(df, nResource, nGroup, nActor, t_df, outCoopCost, inDefCost){
+  
+  
+  for (a in df$Actor){ # Loop through all actors in resource dataframe
+    
+    #Extract the actors resources 
+    #as.data.frame() makes sure it works with one resource
+    R = as.data.frame(df[a,5:(4+nResource)])
+    
+    #Temporary happiness score
+    temp_hap = 0 
+    
+    for (r in 1:nResource){ #loop through resources
+      
+      # Determain dependend resource
+      if (r == nResource){
+        d_r = 1
+      } else {
+        d_r = r + 1
+      }
+      
+      temp_hap = temp_hap + R[1,r] * R[1,d_r] # THE EQUATION
+    } # End loop through resources
+    
+
+    # Log transform happiness 
+    temp_hap = log(1+temp_hap) # we plus hap with 1 because log(1)=0 and we want to start our scale at 0
+    
+    
+    a_coop = t_df[which(t_df$Actor==a),"Coop"]
+    a_InG = t_df[which(t_df$Actor==a),"withinGroupInt"]
+    
+    # Cost for coop with outgroup
+    if (a_coop == 1 & a_InG == 0){
+      temp_hap = temp_hap - outCoopCost
+    }
+    
+    ia_coop = t_df[which(t_df$Actor==a),"CoopInAc"]
+    
+    # cost of defecting ingroup
+    if (a_coop == 0 & a_InG == 1 & ia_coop == 1){
+      temp_hap = temp_hap - inDefCost
+    }
+    
+    # Update the actors happiness
+    df[a,4] = temp_hap
+    
+  } # End loop through actors
+  
+  # Calculate the influence of group happiness
+  for (g in 1:nGroup){
+    g_df = subset(df, Group == g)
+    g_hap  = mean(g_df$Happiness)/(1+max(g_df$Happiness)-min(g_df$Happiness)) # THE EQUATION 
+    g_a = (g-1) * nActor + 1:nActor # list of actors in g
+    df[g_a,4] = df[g_a,4] + g_hap
+  }
+  
+  
+  return(df) # return the hole dataframe
+  
+  
+}# End function
+
+
+
+###############.
+### MEET UP ###
+###############.
+# function that simulates all the actors in a network meeting and potentially trading.
+meet_up = function(network,r_list,df,nResource,nActor,inGfav){
+  
+  #Empty container
+  t_df = data.frame()
+  
+  
+  nw = network
+  
+  n=1
+  for (a1 in nw[,1]){ #Loop Through all the actors in the first column of the edge list (actor 1)
+    
+    a2 = nw[n,2] # Who is actor 1 interaction with? (actor 2!)
+    g1 = nw[n,3] # group of actor 1
+    g2 = nw[n,4] # group of actor 2
+    
+
+    # calculating the weights for the decisions to trade or not
+    if (g1 == g2){ # if they are in the same group
+      memSum1 = memory_df[a1,2] + memory_df[a1,3]
+      CoopWeight1 = memory_df[a1,2]/memSum1
+      
+      memSum2 = memory_df[a2,2] + memory_df[a2,3]
+      CoopWeight2 = memory_df[a2,2]/memSum2
+      
+      wGInt = 1 # within group interaction
+      
+    } else { # if they are NOT in the same group
+      memSum1 = memory_df[a1,4] + memory_df[a1,5]
+      CoopWeight1 = (memory_df[a1,4]-inGfav)/memSum1
+      
+      memSum2 = memory_df[a2,4] + memory_df[a2,5]
+      CoopWeight2 = (memory_df[a2,4]-inGfav)/memSum2
+      
+      wGInt = 0 # no within group interaction
+    }
+    
+    # making sure that weights are between 0.01 and 1
+    if (CoopWeight1 <= 0) CoopWeight1 = 0.01
+    if (CoopWeight2 <= 0) CoopWeight2 = 0.01
+    
+    if (CoopWeight1 > 1) CoopWeight1 = 1
+    if (CoopWeight2 > 1) CoopWeight2 = 1
+    
+    
+    #Trde decision (1 is Coop and 0 is Def)
+    t1 = rbinom(1,1,CoopWeight1)
+    t2 = rbinom(1,1,CoopWeight2)
+   
+    #the resources that the actors gathered this round
+    r1 = r_list[a1] 
+    r2 = r_list[a2]
+      
+    # TRADE or NO TRADE
+    if (t1 + t2 == 2){ # if both actors want to trade
+      r_list[a2] = r1 # put actor 1's resource in actor 2's place
+      r_list[a1] = r2 # put actor 2's resource in actor 1's place
+      trade = 1
+    } else trade = 0
+    
+    if (t1 + t2 == 1){ #if one wants to trade but not the other
+      failTrade = 1
+    } else failTrade = 0
+    
+    if (t1 + t2 == 0){ #if no one wants to trade
+      noTrade = 1
+    } else noTrade = 0
+      
+    if (t1 + t2 == 2 & g1 != g2){ # if there was a trade and they were not in same group
+      outTrade = 1 # INTERGROUP COOPERATION! (kinda)
+    } else outTrade = 0
+    
+    n = n + 1
+    
+    #making trade dataframe
+    temp_df = data.frame(Actor = c(a1,a2), 
+                         Resource = c(r1,r2),
+                         Coop = c(t1,t2),
+                         CoopWeight = c(CoopWeight1,CoopWeight2),
+                         withinGroupInt = wGInt,
+                         InterActor = c(a2,a1),
+                         ResourceInAc = c(r2,r1),
+                         CoopInAc = c(t2,t1),
+                         CoopWeightInAc = c(CoopWeight2,CoopWeight1),
+                         GroupInAc = c(g2,g1),
+                         Trade = trade, 
+                         No_Trade = noTrade, 
+                         Fail_Trade = failTrade, 
+                         Outgroup_Trade = outTrade)
+    t_df = rbind(t_df,temp_df)
+    
+  } #end loop through network
+  
+  # update resources in resource df 
+  n = 1
+  for (r in r_list){
+    if (r != 0){
+      df[n,4+r] = df[n,4+r] + 1
+    }
+    n = n + 1
+  }
+  
+  
+ 
+  return(list(df,t_df))
+}
+
+
+#####################.
+### UPDATE MEMORY ###
+#####################.
+# Function that updates the decision memory of all the actors
+update_memory = function(meet_up_data, memory_df, hap_list, nActor, nGroup, round,df){
+  
+  hap_dif = df[,4] - hap_list #the difference between the how happy they were before and now
+  
+  allA = nActor * nGroup # number of actors
+  
+  for (a in 1:allA) { #loop through actors
+    
+    ingroup = meet_up_data$withinGroupInt[which(meet_up_data$Actor==a)] #did they have an ingroup interaction?
+    coop = meet_up_data$Coop[which(meet_up_data$Actor==a)] # did they cooperate?
+    
+    if (ingroup == 1) { 
+      if (coop == 1){ 
+        memory_df$InCoopMem[a] = (round * memory_df$InCoopMem[a] + hap_dif[a])/(round+1) # ingroup and coop
+      } else memory_df$InDefMem[a] = (round * memory_df$InDefMem[a] + hap_dif[a])/(round+1) # ingroup and def
+    } else {
+      if (coop == 1){
+        memory_df$OutCoopMem[a] = (round * memory_df$OutCoopMem[a] + hap_dif[a])/(round+1) # outgroup and coop
+      } else memory_df$OutDefMem[a] = (round * memory_df$OutDefMem[a] + hap_dif[a])/(round+1) # outgroup and def
+    }
+  } # end loop through actors
+  
+  return(memory_df)
+}
+
+
+##################.
+### SIMULATION ###
+##################.
+# Function that put all the previus fucntions together to make the final simulation.
+simulation = function(name,nSim,nRounds,nGroup,nActor,nResource,rOffset,sdGather,gatherSuccess,ingroupP, degration, premade_nw=F, nw_df_list,inGfav,priorMem, outCoopCost, inDefCost){
+  
+  # Record the process time (this is just to measure how time consuming it is to run the simulation)
+  ptm = proc.time() 
+  
+  print(name) # If running the function multiple times it is nice to know where we are at.
+  
+  
+  # A for loop running the simulations in parralelle across CPU cores
+  # Equivalent to "for (sim in 1:nSim)" except that it rbinds everything in the end (and runs A LOT faster)
+  data = foreach(sim = 1:nSim, .combine = "rbind", 
+                    .export = c("create_resource_df","gather_resource","create_network","meet_up","calculate_happiness","update_memory"),
+                    .packages = "fastnet") %dopar% {
+    
+    # Create reasource dataframe
+    resource_df = create_resource_df(nGroup,nActor,nResource,rOffset)
+    
+    # Empty container
+    sim_data = data.frame()
+    
+    # creating a dataframe for desicion memory
+    memory_df = data.frame(Actor = 1:(nActor*nGroup), InCoopMem = priorMem, InDefMem = priorMem, OutCoopMem = priorMem, OutDefMem = priorMem) 
+    
+    for (round in 1:nRounds){ # loop through rounds
+      
+      # Gather resources and put them into a list
+      resource_list = gather_resource(resource_df,sdGather,nResource,gatherSuccess)
+      
+      # If no there is no premade list of networks then create a network.
+      if (premade_nw == T){
+        network = nw_df_list[[round]]
+      } else {
+        network = create_network(nGroup,nActor,ingroupP)
+      } 
+      
+      # Meet up and do the interactions.
+      meet_up_outcome = meet_up(network,resource_list,resource_df,nResource,nActor,inGfav)
+      resource_df = meet_up_outcome[[1]]
+      meet_up_data = meet_up_outcome[[2]]
+      
+      #list of how happy they are before updating their score
+      hap_list = resource_df[,4]
+      
+      # Update the happiness of everyone
+      resource_df = calculate_happiness(resource_df,nResource,nGroup,nActor,meet_up_data, outCoopCost, inDefCost)
+
+      # Update memory
+      memory_df = update_memory(meet_up_data, memory_df, hap_list, nActor, nGroup, round,resource_df)
+      
+      
+      #Resource DEGRATION... consumsion...
+      resource_df[,5:(4+nResource)] = round(resource_df[,5:(4+nResource)] - degration, digits = 2)
+      
+      
+      # Make sure an actor can have a minimum of 0 resources
+      for (col in 5:(4+nResource)){
+        n = 1
+        for (r in resource_df[,col]){
+          if (r < 0){
+            resource_df[n,col] = 0
+          }
+          n = n + 1
+        }
+      }
+      
+      #Update happiness after Degration
+      resource_df = calculate_happiness(resource_df,nResource,nGroup,nActor,meet_up_data, outCoopCost, inDefCost)
+      
+      
+      #____
+      #OUTPUT DATA 
+      #____
+      
+      round_data = merge(resource_df,meet_up_data, by = "Actor")
+      round_data = merge(round_data,memory_df, by = "Actor")
+      round_data$Simulation = sim
+      round_data$Round = round
+      sim_data = rbind(sim_data,round_data)
+      
+    }# End round loop
+    
+    sim_data # Object that the foreach function should rbind 
+    
+  }#End simulation loop
+  
+  # Calculate the time since we started and print it
+  print(proc.time() - ptm)
+  print("See you in 25 years!")
+  
+  return(data)
+}#End function 
+
+
+
+```
+
+<h1>Calibrating</h1>
+
+```{r calibration}
+
+# THESE LINES MUST BE RUN BEFORE SIMULATION FUNCTION
+cores = detectCores()
+registerDoSNOW(makeCluster(cores, type = "SOCK"))
+
+#testing the memory prior for calibration
+prior_test = data.frame()
+for (i in seq(from = 0.1, to = 1, by = 0.01)){
+  sim = simulation(name = paste("prior test -",i),
+                         nSim = 4,
+                         nRounds = 1000, # Should not be changed above 1000 if running with network1000
+                         nGroup = 8, # Should not be changed if running with network1000
+                         nActor = 18, # Should not be changed if running with network1000
+                         nResource = 4, # Must be a divisor of nGroup
+                         rOffset = 0,
+                         sdGather = 10,
+                         gatherSuccess = 1,
+                         ingroupP = 0.8, # Should not be changed if running with network1000
+                         degration = 0.25,
+                         premade_nw = F,
+                         nw_df_list = 0,#network1000
+                         inGfav = 0.00,
+                         priorMem = i,
+                         outCoopCost = 0.4, 
+                         inDefCost = 0.2
+                         )
+  
+  ic = sum(sim$InCoopMem <= 0)
+  id = sum(sim$InDefMem <= 0)
+  oc = sum(sim$OutCoopMem <= 0)
+  od = sum(sim$OutDefMem <= 0)
+  
+  temp_df = data.frame(prior = i, IC = ic, ID = id, OC = oc, OD = od)
+  
+  prior_test = rbind(prior_test,temp_df)
+}
+
+ggplot(prior_test, aes(x = prior)) +
+  geom_smooth(aes(y = IC), color = 1) +
+  geom_smooth(aes(y = ID), color = 2) +
+  geom_smooth(aes(y = OC), color = 3) +
+  geom_smooth(aes(y = OD), color = 4)
+  
+
+test_sim_results = simulation(name = "test_sim",
+                         nSim = 4,
+                         nRounds = 1000,
+                         nGroup = 8, 
+                         nActor = 18, 
+                         nResource = 4, # Must be a divisor of nGroup
+                         rOffset = 0,
+                         sdGather = 0.25,
+                         gatherSuccess = 1,
+                         ingroupP = 0.8, # Should not be changed if running with network1000
+                         degration = 0.25,
+                         premade_nw = F,
+                         nw_df_list = 0,#network1000
+                         inGfav = 0.00,
+                         priorMem = 0.6,
+                         outCoopCost = 0.4, 
+                         inDefCost = 0.2
+                         )
+
+mem_data = data.frame(mem = c(test_sim_results$InCoopMem, test_sim_results$InDefMem, test_sim_results$OutCoopMem, test_sim_results$OutDefMem))
+
+
+
+ggplot(mem_data, aes(x = mem))+
+  geom_density()
+
+ggplot(test_sim_results) +
+  geom_density(aes(x = InCoopMem), color = "red")+
+  geom_density(aes(x = InDefMem), color = "blue")+
+  geom_density(aes(x = OutCoopMem), color = "black")+
+  geom_density(aes(x = OutDefMem), color = "gray")
+
+ggplot(test_sim_results) +
+  geom_density(aes(x=Happiness))
+
+
+mean(test_sim_results$InCoopMem)
+sd(test_sim_results$InCoopMem)
+
+# Testing cost values
+cost_results = data.frame()
+for (i in seq(from = 0, to = 0.5, by = 0.05)){
+  
+  test_cost = simulation(name = paste("We are at:",i),
+                                 nSim = 4,
+                                 nRounds = 500,
+                                 nGroup = 8, 
+                                 nActor = 18, 
+                                 nResource = 4, # Must be a divisor of nGroup
+                                 rOffset = 0,
+                                 sdGather = 0.25,
+                                 gatherSuccess = 1,
+                                 ingroupP = 0.5, # Should not be changed if running with network1000
+                                 degration = 0.25,
+                                 premade_nw = F,
+                                 nw_df_list = 0,#network1000
+                                 inGfav = 0.00,
+                                 priorMem = 0.6,
+                                 outCoopCost = i, 
+                                 inDefCost = i/2
+  )
+  test_cost$cost = i
+  
+  cost_results = rbind(cost_results, test_cost)
+  
+}
+
+
+ggplot(cost_results, aes(x = Round, y = Happiness)) +
+  geom_smooth(aes(color = as.factor(cost_results$cost)))
+
+ggplot(cost_results, aes(x = Round, y = OutCoopMem)) +
+  geom_smooth(aes(color = as.factor(cost_results$cost)))
+
+ggplot(cost_results, aes(x = Round, y = InDefMem)) +
+  geom_smooth(aes(color = as.factor(cost_results$cost)))
+
+ggplot(cost_results, aes(x = Round, y = InCoopMem)) +
+  geom_smooth(aes(color = as.factor(cost_results$cost)))
+
+ggplot(cost_results, aes(x = Round, y = OutDefMem)) +
+  geom_smooth(aes(color = as.factor(cost_results$cost)))
+
+
+
+ggplot(subset(cost_results, cost=="0.4"), aes(x = Round, y = CoopWeight)) +
+  geom_point(
+    #aes(color = as.factor(cost_results$cost))
+    ) +
+  facet_wrap(~ withinGroupInt)
+
+ggplot(subset(cost_results, cost==0.4), aes(x = Happiness))+
+  geom_density() +
+  geom_density(aes(x = cost_results$Happiness[which(cost_results$cost==0)]), color = "red")
+
+
+name = "test_sim"
+nSim = 2
+nRounds = 100
+nGroup = 8
+nActor = 18 
+nResource = 4 # Must be a divisor of nGroup
+rOffset = 0
+sdGather = 10
+gatherSuccess = 1
+ingroupP = 0.8 # Should not be changed if running with network1000
+degration = 0.25
+premade_nw = F
+nw_df_list = 0 #network1000
+inGfav = 0.00
+priorMem = 0.6
+outCoopCost = 0.4
+inDefCost = 0.2
+```
+
+
+
+<h1>Run simulation</h1>
+
+```{r Run sim}
+
+#make premade network
+network1000 = list()
+for (i in 1:1000){
+  network = create_network(4,12,0.2) # nGroup, nActor, ingroupP
+  network = list(network)
+  network1000 = c(network1000,network)
+}
+
+
+# THESE LINES MUST BE RUN BEFORE SIMULATION FUNCTION
+cores = detectCores()
+registerDoSNOW(makeCluster(cores, type = "SOCK"))
+
+#Manipulation values
+ingroupP_list = c(0.6, 0.7, 0.8, 0.9)
+sdGather_list = c(0.25, 0.35, 0.45, 0.55)
+
+#RESET DATAFRAME
+data = data.frame()
+#Run simulation
+for (p in ingroupP_list){
+  for (g in sdGather_list){
+    sim = simulation(paste("simulation3  -  P:",p,"    G:",g),
+                     nSim = 8,
+                     nRounds = 1000, # Should not be changed above 1000 if running with network1000
+                     nGroup = 8, # Should not be changed if running with network1000
+                     nActor = 18, # Should not be changed if running with network1000
+                     nResource = 4, # Must be a divisor of nGroup
+                     rOffset = 0,
+                     gatherSuccess = 1,
+                     degration = 0.25,
+                     premade_nw = F,
+                     nw_df_list = 0,#network1000
+                     inGfav = 0.00,
+                     priorMem = 0.6,
+                     outCoopCost = 0.4, 
+                     inDefCost = 0.2,
+                     ingroupP = p,
+                     sdGather = g)
+    
+    sim$Asymmetry = g
+    sim$Isolation = p
+    
+    data = rbind(data,sim)
+  }
+}
+
+
+#data 1 = 16 sim
+#data 2 = 16 sim
+#data 3  = 8 sim
+
+data$Simulation = data$Simulation + 300
+write.csv(data, file = "data3.csv")
+
+data1 = fread("data1.csv")
+data2 = fread("data2.csv")
+data3 = fread("data3.csv")
+
+data_full = rbind(data1,data2,data3)
+
+write.csv(data_full, file = "full_data.csv")
+
+
+
+
+```
+
+
+<h1>PLOTS</h1>
+
+```{r Plots}
+
+
+test_sim_results1 = subset(test_sim_results, Simulation == 1)
+
+withinG_data = test_sim_results1[which(test_sim_results$withinGroupInt==1),]
+interG_data = test_sim_results1[which(test_sim_results$withinGroupInt==0),]
+
+a35 = test_sim_results1[which(test_sim_results$Actor==35),]
+a35 = a35[1:10,]
+
+group1 = test_sim_results1[which(test_sim_results$Group==1),]
+
+ggplot(withinG_data, aes(x = Round, y = CoopWeight)) +
+  geom_line() +
+  facet_wrap(~ Actor)
+
+
+ggplot(interG_data, aes(x = Round, y = CoopWeight)) +
+  geom_line() +
+  facet_wrap(~ Actor)
+
+
+ggplot(group1, aes(x = Round, y = Happiness)) +
+  geom_line(size=0.3) +
+  facet_wrap(~ Actor)
+
+
+ggplot(a35, aes(x = Round)) +
+  geom_line(aes(y = InCoopMem),color=1) +
+  geom_line(aes(y = InDefMem),color=2) +
+  geom_line(aes(y = OutCoopMem),color=3) +
+  geom_line(aes(y = OutDefMem),color=4) 
+
+ggplot(test_sim_results1, aes(x = Round)) +
+  geom_line(aes(y = InCoopMem),color=1) +
+  geom_line(aes(y = InDefMem),color=2) +
+  geom_line(aes(y = OutCoopMem),color=3) +
+  geom_line(aes(y = OutDefMem),color=4) +
+  facet_wrap(~ Actor)
+
+
+
+
+sd25 = round(rnorm(1e5,mean = 0, sd = 0.25))
+sd50 = round(rnorm(1e5,mean = 0, sd = 0.5))
+sd75 = round(rnorm(1e5,mean = 0, sd = 0.75))
+sd1 = round(rnorm(1e5,mean = 0, sd = 1))
+
+sd30 = round(rnorm(1e5,mean = 0, sd = 0.55))
+
+length(sd25[sd25!=0&sd25%in%-1:1])/length(sd25)
+length(sd50[sd50!=0&sd50%in%-1:1])/length(sd50)
+length(sd75[sd75!=0&sd75%in%-1:1])/length(sd75)
+length(sd1[sd1!=0])/length(sd1)
+
+length(sd1[sd30!=0])/length(sd30)
+
+```
+
